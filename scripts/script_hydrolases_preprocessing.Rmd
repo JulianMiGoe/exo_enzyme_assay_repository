@@ -1,0 +1,301 @@
+---
+title: "Hydrolase Data Preprocessing"
+author: "Julian Mittmann-Goetsch"
+date: "2024-08-06"
+output: html_document
+---
+
+## Version 2.0: Generic rework - automatic plate detection, generic metadata columns, separate OM data - 08.10.2026 | JM
+## Version 1.1: Updated version log format - 17.07.2025 | JM
+## Version 1.0: EEA raw data processing routine - 11.02.2025 | JM
+## Purpose: Process raw plate reader files of fluorometric hydrolase assays into enzyme activities per sample
+
+# Step 1: Prepare session
+## Step 1a: Install necessary packages
+```{r, message=FALSE, warning=FALSE}
+#install.packages("here")
+#install.packages("readxl")
+#install.packages("tidyverse")
+```
+
+## Step 1b: Load necessary packages
+```{r, message=FALSE}
+library(here)
+library(readxl)
+library(tidyverse)
+```
+
+## Step 1c: Define settings
+```{r}
+# Folders and files
+path_raw       <- here("data", "hydrolases", "raw")
+path_metadata  <- here("data", "hydrolases", "metadata", "df_hydrolases_metadata.xlsx")
+path_om        <- here("data", "om", "df_om.xlsx")
+path_processed <- here("data", "hydrolases", "processed")
+
+# Assay constants
+standard_nmol   <- 5      # Amount of fluorescent standard per well [nmol]
+homogenate_ml   <- 0.2    # Volume of sample homogenate per well [mL]
+max_activity_om <- 10000  # Upper plausibility limit for activity_om [nmol g OM-1 h-1]
+```
+
+# Step 2: Load data
+## Step 2a: Load metadata
+```{r}
+# One row per sample on a plate
+df_hydrolases_0_metadata <- read_excel(path_metadata) %>%
+  mutate(
+    id            = as.character(id),
+    sampling_date = as_date(sampling_date)
+  )
+
+df_hydrolases_0_metadata
+```
+
+## Step 2b: Load OM data
+```{r}
+# One row per sample with the crucible weights of the loss-on-ignition measurement
+df_om_0_raw <- read_excel(path_om) %>%
+  mutate(id = as.character(id))
+
+df_om_0_raw
+```
+
+## Step 2c: Load raw plate reader data
+```{r}
+# Every .csv file in the raw folder is one plate
+plate_files <- list.files(path_raw, pattern = ".csv", full.names = TRUE)
+
+# Read all plates into one table: one line per plate row, columns col_1 to col_12
+df_hydrolases_1_raw <- read_csv(
+  plate_files,
+  id             = "file",
+  skip           = 1,
+  col_names      = paste0("col_", 1:12),
+  show_col_types = FALSE
+)
+
+# Plate name = file name without ".csv"; row = plate row 1 to 8
+df_hydrolases_1_raw <- df_hydrolases_1_raw %>%
+  mutate(plate = str_remove(basename(file), fixed(".csv"))) %>%
+  group_by(plate) %>%
+  mutate(row = row_number()) %>%
+  ungroup() %>%
+  select(plate, row, col_1:col_12)
+
+df_hydrolases_1_raw
+```
+
+# Step 3: Assign wells to samples
+## Step 3a: Split plates by sample position
+```{r}
+# Plate layout - each plate row is one technical replicate:
+#
+#              col 1-3      col 4-6      col 7-9      col 10-12
+#   rows 1-4   reference    position 1   position 2   position 3
+#   rows 5-8   reference    position 4   position 5   position 6
+#
+# Reference columns: 1 = blank, 2 = standard, 3 = substrate control
+# Sample columns:    1st = homogenate control, 2nd = quench, 3rd = assay
+
+df_position_1 <- df_hydrolases_1_raw %>%
+  filter(row %in% 1:4) %>%
+  select(plate, row,
+         blank = col_1, standard = col_2, substrate_control = col_3,
+         homogenate_control = col_4, quench = col_5, assay = col_6) %>%
+  mutate(position = 1)
+
+df_position_2 <- df_hydrolases_1_raw %>%
+  filter(row %in% 1:4) %>%
+  select(plate, row,
+         blank = col_1, standard = col_2, substrate_control = col_3,
+         homogenate_control = col_7, quench = col_8, assay = col_9) %>%
+  mutate(position = 2)
+
+df_position_3 <- df_hydrolases_1_raw %>%
+  filter(row %in% 1:4) %>%
+  select(plate, row,
+         blank = col_1, standard = col_2, substrate_control = col_3,
+         homogenate_control = col_10, quench = col_11, assay = col_12) %>%
+  mutate(position = 3)
+
+df_position_4 <- df_hydrolases_1_raw %>%
+  filter(row %in% 5:8) %>%
+  select(plate, row,
+         blank = col_1, standard = col_2, substrate_control = col_3,
+         homogenate_control = col_4, quench = col_5, assay = col_6) %>%
+  mutate(position = 4)
+
+df_position_5 <- df_hydrolases_1_raw %>%
+  filter(row %in% 5:8) %>%
+  select(plate, row,
+         blank = col_1, standard = col_2, substrate_control = col_3,
+         homogenate_control = col_7, quench = col_8, assay = col_9) %>%
+  mutate(position = 5)
+
+df_position_6 <- df_hydrolases_1_raw %>%
+  filter(row %in% 5:8) %>%
+  select(plate, row,
+         blank = col_1, standard = col_2, substrate_control = col_3,
+         homogenate_control = col_10, quench = col_11, assay = col_12) %>%
+  mutate(position = 6)
+
+# Combine all positions: one line per well row of a sample
+df_hydrolases_2_wells <- bind_rows(
+  df_position_1, df_position_2, df_position_3,
+  df_position_4, df_position_5, df_position_6
+)
+
+df_hydrolases_2_wells
+```
+
+## Step 3b: Average technical replicates
+```{r}
+# Mean of the four technical replicates per sample
+df_hydrolases_3_means <- df_hydrolases_2_wells %>%
+  group_by(plate, position) %>%
+  summarise(
+    n_replicates       = n(),
+    blank              = mean(blank, na.rm = TRUE),
+    standard           = mean(standard, na.rm = TRUE),
+    substrate_control  = mean(substrate_control, na.rm = TRUE),
+    homogenate_control = mean(homogenate_control, na.rm = TRUE),
+    quench             = mean(quench, na.rm = TRUE),
+    assay              = mean(assay, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+df_hydrolases_3_means
+```
+
+# Step 4: Calculate enzyme activities
+## Step 4a: Calculate dry matter and OM fractions
+```{r}
+# All fractions refer to the fresh sample, like the sample mass of the assay
+df_om_1_fractions <- df_om_0_raw %>%
+  mutate(
+    fw_g        = crucible_fw - crucible_weight,       # Fresh sample
+    dw_g        = crucible_dw_105 - crucible_weight,   # Dry sample after 105 °C
+    om_g        = crucible_dw_105 - crucible_loi_550,  # Organic matter lost at 550 °C
+    dw_fraction = dw_g / fw_g,
+    om_fraction = om_g / fw_g
+  )
+
+# Show implausible fractions (outside 0-1), e.g. typos in the crucible weights
+df_om_1_fractions %>%
+  filter(dw_fraction < 0 | dw_fraction > 1 | om_fraction < 0 | om_fraction > 1)
+
+# Set implausible fractions to NA
+df_om_2_checked <- df_om_1_fractions %>%
+  mutate(
+    dw_fraction = if_else(dw_fraction < 0 | dw_fraction > 1, NA, dw_fraction),
+    om_fraction = if_else(om_fraction < 0 | om_fraction > 1, NA, om_fraction)
+  ) %>%
+  select(id, dw_fraction, om_fraction)
+```
+
+## Step 4b: Check that metadata, raw data and OM data match
+```{r}
+# Each check shows the problematic lines - an empty table means everything is fine
+
+# Check 1: plate positions listed twice in the metadata
+df_hydrolases_0_metadata %>%
+  count(plate, position) %>%
+  filter(n > 1)
+
+# Check 2: samples listed twice in the OM data
+df_om_0_raw %>%
+  count(id) %>%
+  filter(n > 1)
+
+# Check 3: plates in the raw folder without metadata (these are not processed)
+df_hydrolases_3_means %>%
+  distinct(plate) %>%
+  anti_join(df_hydrolases_0_metadata, by = "plate")
+
+# Check 4: samples in the metadata without raw data
+df_hydrolases_0_metadata %>%
+  anti_join(df_hydrolases_3_means, by = c("plate", "position"))
+
+# Check 5: samples in the metadata without OM data
+df_hydrolases_0_metadata %>%
+  anti_join(df_om_0_raw, by = "id")
+```
+
+## Step 4c: Merge metadata, fluorescence and OM data
+```{r}
+df_hydrolases_4_merged <- df_hydrolases_0_metadata %>%
+  left_join(df_hydrolases_3_means, by = c("plate", "position")) %>%
+  left_join(df_om_2_checked, by = "id")
+```
+
+## Step 4d: Calculate activities
+```{r}
+df_hydrolases_5_activity <- df_hydrolases_4_merged %>%
+  mutate(
+    # Incubation time [h]
+    incubation_h = as.numeric(difftime(incubation_end, incubation_start, units = "hours")),
+
+    # Fluorescence per nmol of standard
+    emission_coef = standard / standard_nmol,
+
+    # Change of the standard fluorescence by the sample (quenching)
+    quench_coef = (quench - homogenate_control) / standard,
+
+    # Fluorescence produced by the enzyme
+    net_fluorescence = (assay - homogenate_control) / quench_coef - substrate_control,
+
+    # Activity per g fresh sample, dry sample and organic matter [nmol g-1 h-1]
+    activity_fw = (net_fluorescence * buffer_ml) /
+                  (emission_coef * homogenate_ml * incubation_h * sample_g),
+    activity_dw = activity_fw / dw_fraction,
+    activity_om = activity_fw / om_fraction
+  )
+```
+
+## Step 4e: Quality control
+```{r}
+# Samples are flagged instead of removed, so that every sample stays in the output
+df_hydrolases_6_processed <- df_hydrolases_5_activity %>%
+  mutate(
+    qc_flag = case_when(
+      is.na(activity_fw)            ~ "missing assay data",
+      activity_fw <= 0              ~ "activity <= 0",
+      activity_om > max_activity_om ~ "activity above limit",
+      .default = "ok"
+    )
+  )
+
+# Show all samples that did not pass the quality control
+df_hydrolases_6_processed %>%
+  filter(qc_flag != "ok") %>%
+  select(id, plate, position, sample_g, buffer_ml, activity_fw, qc_flag)
+```
+
+# Step 5: Save processed data
+```{r}
+dir.create(path_processed, showWarnings = FALSE)
+
+write_csv(df_hydrolases_6_processed,
+          file.path(path_processed, "df_hydrolases_processed.csv"))
+```
+
+# Step 6: Summary of dataframes
+```{r}
+# Number of samples per enzyme and quality flag
+df_hydrolases_6_processed %>%
+  count(enzyme, qc_flag)
+
+# Activities of the samples that passed the quality control
+df_hydrolases_6_processed %>%
+  filter(qc_flag == "ok") %>%
+  select(activity_fw, activity_dw, activity_om) %>%
+  summary()
+```
+
+# References
+```{r}
+# here: Müller, K. (2025). here: A Simpler Way to Find Your Files. R package version 1.0.2. https://doi.org/10.32614/CRAN.package.here
+# readxl: Wickham, H. & Bryan, J. (2026). readxl: Read Excel Files. R package version 1.5.0. https://doi.org/10.32614/CRAN.package.readxl
+# tidyverse: Wickham, H., Averick, M., Bryan, J., Chang, W., McGowan, L. D., François, R., ... & Yutani, H. (2019). Welcome to the tidyverse. Journal of Open Source Software, 4(43), 1686. https://doi.org/10.21105/joss.01686
+```

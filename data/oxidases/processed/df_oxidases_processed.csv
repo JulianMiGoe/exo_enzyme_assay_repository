@@ -1,0 +1,25 @@
+id,factor_1,sampling_date,plate,position,sample_g,buffer_ml,comment,enzyme,n_reads,slope_per_min,r_squared,sample_per_well_g,activity,qc_flag
+sample_1,NA,NA,plate_oxidase_001,1,0.5,50,NA,peroxidase,5,0.004160000000000002,0.6813334318410705,0.001,249.6000000000001,r2 below limit
+sample_1,NA,NA,plate_oxidase_001,1,0.5,50,NA,phenol_oxidase,5,0.003902222222222222,0.9988364590000804,0.001,234.1333333333333,ok
+sample_1,NA,NA,plate_oxidase_001,1,0.5,50,NA,total_oxidase,5,0.008062222222222224,0.8942172287982538,0.001,483.73333333333346,r2 below limit
+sample_2,NA,NA,plate_oxidase_001,2,0.5,50,NA,peroxidase,5,0.008904444444444442,0.835095075513044,0.001,534.2666666666665,r2 below limit
+sample_2,NA,NA,plate_oxidase_001,2,0.5,50,NA,phenol_oxidase,5,0.0034333333333333373,0.9985262793300949,0.001,206.00000000000023,ok
+sample_2,NA,NA,plate_oxidase_001,2,0.5,50,NA,total_oxidase,5,0.01233777777777778,0.9094547856929248,0.001,740.2666666666669,r2 below limit
+sample_3,NA,NA,plate_oxidase_001,3,0.5,50,NA,peroxidase,5,0.0057400000000000055,0.7862193673374155,0.001,344.4000000000003,r2 below limit
+sample_3,NA,NA,plate_oxidase_001,3,0.5,50,NA,phenol_oxidase,5,0.0013888888888888885,0.9890742897655336,0.001,83.33333333333331,ok
+sample_3,NA,NA,plate_oxidase_001,3,0.5,50,NA,total_oxidase,5,0.007128888888888895,0.8483750131898283,0.001,427.7333333333337,r2 below limit
+sample_4,NA,NA,plate_oxidase_001,4,0.5,50,NA,peroxidase,5,0.006311111111111109,0.746619311165558,0.001,378.6666666666665,r2 below limit
+sample_4,NA,NA,plate_oxidase_001,4,0.5,50,NA,phenol_oxidase,5,0.0013911111111111162,0.9988682707993474,0.001,83.46666666666697,ok
+sample_4,NA,NA,plate_oxidase_001,4,0.5,50,NA,total_oxidase,5,0.007702222222222225,0.8146606910739358,0.001,462.1333333333335,r2 below limit
+sample_5,NA,NA,plate_oxidase_001,5,0.5,50,NA,peroxidase,5,0.005500000000000004,0.6687144525834302,0.001,330.0000000000002,r2 below limit
+sample_5,NA,NA,plate_oxidase_001,5,0.5,50,NA,phenol_oxidase,5,0.0029999999999999953,0.9864468428288425,0.001,179.99999999999972,ok
+sample_5,NA,NA,plate_oxidase_001,5,0.5,50,NA,total_oxidase,5,0.0085,0.8501758388372554,0.001,510,r2 below limit
+sample_6,NA,NA,plate_oxidase_001,6,0.5,50,NA,peroxidase,5,0.005366666666666666,0.5037154490615814,0.001,321.99999999999994,r2 below limit
+sample_6,NA,NA,plate_oxidase_001,6,0.5,50,NA,phenol_oxidase,5,0.001266666666666671,0.9871179437321513,0.001,76.00000000000026,ok
+sample_6,NA,NA,plate_oxidase_001,6,0.5,50,NA,total_oxidase,5,0.0066333333333333366,0.6203452652908115,0.001,398.00000000000017,r2 below limit
+sample_7,NA,NA,plate_oxidase_001,7,0.5,50,other soil type with low activity,peroxidase,5,0.0025933333333333338,0.9812078341638016,0.001,155.60000000000002,ok
+sample_7,NA,NA,plate_oxidase_001,7,0.5,50,other soil type with low activity,phenol_oxidase,5,0.0011822222222222208,0.9974062588102625,0.001,70.93333333333325,ok
+sample_7,NA,NA,plate_oxidase_001,7,0.5,50,other soil type with low activity,total_oxidase,5,0.0037755555555555546,0.9937786435094909,0.001,226.53333333333327,ok
+negative_control,NA,NA,plate_oxidase_001,8,NA,NA,buffer instead of soil suspension,peroxidase,5,-4.6666666666666705e-5,0.9756637168141586,NA,NA,negative control
+negative_control,NA,NA,plate_oxidase_001,8,NA,NA,buffer instead of soil suspension,phenol_oxidase,5,4.000000000000004e-5,0.7363636363636369,NA,NA,negative control
+negative_control,NA,NA,plate_oxidase_001,8,NA,NA,buffer instead of soil suspension,total_oxidase,5,-6.6666666666666726e-06,0.12500000000000222,NA,NA,negative control

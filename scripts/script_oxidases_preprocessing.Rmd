@@ -1,0 +1,255 @@
+---
+title: "Oxidase Data Preprocessing"
+author: "Julian Mittmann-Goetsch"
+date: "2026-10-08"
+output: html_document
+---
+
+## Version 1.0: Oxidase routine mirroring the hydrolase preprocessing - 08.10.2026 | JM
+## Purpose: Process raw plate reader files of photometric oxidase assays (TMB) into phenol oxidase and peroxidase activities per sample
+
+# Step 1: Prepare session
+## Step 1a: Install necessary packages
+```{r, message=FALSE, warning=FALSE}
+#install.packages("here")
+#install.packages("readxl")
+#install.packages("tidyverse")
+```
+
+## Step 1b: Load necessary packages
+```{r, message=FALSE}
+library(here)
+library(readxl)
+library(tidyverse)
+```
+
+## Step 1c: Define settings
+```{r}
+# Folders and files
+path_raw       <- here("data", "oxidases", "raw")
+path_metadata  <- here("data", "oxidases", "metadata", "df_oxidases_metadata.xlsx")
+path_processed <- here("data", "oxidases", "processed")
+
+# Assay constants
+homogenate_ml     <- 0.1   # Volume of sample suspension per well [mL]
+read_interval_min <- 15    # Time between two reads [min]; read 1 is the start (t0)
+max_time_min      <- 60    # Last time point used for the slope [min]; lower it to drop non-linear reads
+min_r_squared     <- 0.98  # Minimum r² of the regression line (protocol: > 0.98)
+
+# Metadata id of negative controls (buffer instead of sample suspension)
+negative_control_id <- "negative_control"
+```
+
+# Step 2: Load data
+## Step 2a: Load metadata
+```{r}
+# One row per sample on a plate (position 1-8 = plate row A-H)
+df_oxidases_0_metadata <- read_excel(path_metadata) %>%
+  mutate(
+    id            = as.character(id),
+    sampling_date = as_date(sampling_date)
+  )
+
+df_oxidases_0_metadata
+```
+
+## Step 2b: Load raw plate reader data
+```{r}
+# Every .xlsx file in the raw folder is one plate (Excel lock files "~$..." are skipped)
+plate_files <- list.files(path_raw, pattern = ".xlsx", full.names = TRUE) %>%
+  str_subset(fixed("~$"), negate = TRUE)
+
+# Read all plates into one table. Each file holds one 8 x 12 block per read;
+# the last column names the read, e.g. "Read 1:630" (read 1 at 630 nm).
+df_oxidases_1_raw <- plate_files %>%
+  set_names() %>%
+  map(read_excel,
+      col_names = c("row_letter", paste0("col_", 1:12), "read"),
+      col_types = c("text", rep("numeric", 12), "text")) %>%
+  bind_rows(.id = "file")
+
+# Keep the plate rows A-H and add plate name, position and time of each read
+df_oxidases_1_raw <- df_oxidases_1_raw %>%
+  filter(row_letter %in% c("A", "B", "C", "D", "E", "F", "G", "H")) %>%
+  mutate(
+    plate    = str_remove(basename(file), fixed(".xlsx")),
+    position = match(row_letter, LETTERS),          # A = 1, B = 2, ... H = 8
+    read     = parse_number(read),                  # "Read 1:630" -> 1
+    time_min = (read - 1) * read_interval_min       # Read 1 = 0 min
+  ) %>%
+  select(plate, position, read, time_min, col_1:col_12)
+
+# Reads and their times per plate
+df_oxidases_1_raw %>%
+  distinct(plate, read, time_min)
+```
+
+# Step 3: Assign wells to treatments
+## Step 3a: Average technical replicates
+```{r}
+# Plate layout - each plate row is one sample, each treatment has three
+# technical replicates side by side:
+#
+#   col 1-3     col 4-6              col 7-9            col 10-12
+#   assay       homogenate control   assay + H2O2       homogenate control + H2O2
+#
+# Assay = sample + substrate (TMB); homogenate control = sample + buffer
+
+df_oxidases_2_means <- df_oxidases_1_raw %>%
+  mutate(
+    assay                   = (col_1 + col_2 + col_3) / 3,
+    homogenate_control      = (col_4 + col_5 + col_6) / 3,
+    assay_h2o2              = (col_7 + col_8 + col_9) / 3,
+    homogenate_control_h2o2 = (col_10 + col_11 + col_12) / 3
+  ) %>%
+  select(plate, position, read, time_min,
+         assay, homogenate_control, assay_h2o2, homogenate_control_h2o2)
+
+df_oxidases_2_means
+```
+
+## Step 3b: Calculate net absorbance per enzyme
+```{r}
+# Phenol oxidase: wells without H2O2
+df_phenol_oxidase <- df_oxidases_2_means %>%
+  mutate(
+    enzyme         = "phenol_oxidase",
+    net_absorbance = assay - homogenate_control
+  )
+
+# Total activity of phenol oxidase and peroxidase: wells with H2O2
+df_total_oxidase <- df_oxidases_2_means %>%
+  mutate(
+    enzyme         = "total_oxidase",
+    net_absorbance = assay_h2o2 - homogenate_control_h2o2
+  )
+
+# Peroxidase: total activity minus phenol oxidase
+df_peroxidase <- df_oxidases_2_means %>%
+  mutate(
+    enzyme         = "peroxidase",
+    net_absorbance = (assay_h2o2 - homogenate_control_h2o2) - (assay - homogenate_control)
+  )
+
+# Combine all enzymes: one line per sample, enzyme and read
+df_oxidases_3_net <- bind_rows(df_phenol_oxidase, df_peroxidase, df_total_oxidase) %>%
+  select(plate, position, enzyme, read, time_min, net_absorbance)
+
+df_oxidases_3_net
+```
+
+# Step 4: Calculate enzyme activities
+## Step 4a: Check that metadata and raw data match
+```{r}
+# Each check shows the problematic lines - an empty table means everything is fine
+
+# Check 1: plate positions listed twice in the metadata
+df_oxidases_0_metadata %>%
+  count(plate, position) %>%
+  filter(n > 1)
+
+# Check 2: plates in the raw folder without metadata (these are not processed)
+df_oxidases_1_raw %>%
+  distinct(plate) %>%
+  anti_join(df_oxidases_0_metadata, by = "plate")
+
+# Check 3: samples in the metadata without raw data
+df_oxidases_0_metadata %>%
+  anti_join(df_oxidases_1_raw, by = c("plate", "position"))
+```
+
+## Step 4b: Calculate the change of absorbance over time
+```{r}
+# Linear regression of net absorbance on time for each sample and enzyme:
+#   slope_per_min = slope of the regression line (= covariance / variance)
+#   r_squared     = coefficient of determination of the regression line
+df_oxidases_4_slopes <- df_oxidases_3_net %>%
+  filter(time_min <= max_time_min) %>%
+  group_by(plate, position, enzyme) %>%
+  summarise(
+    n_reads       = n(),
+    slope_per_min = cov(time_min, net_absorbance) / var(time_min),
+    r_squared     = cor(time_min, net_absorbance)^2,
+    .groups = "drop"
+  )
+
+df_oxidases_4_slopes
+```
+
+## Step 4c: Merge metadata and slopes
+```{r}
+# One line per sample and enzyme
+df_oxidases_5_merged <- df_oxidases_0_metadata %>%
+  left_join(df_oxidases_4_slopes, by = c("plate", "position"))
+```
+
+## Step 4d: Calculate activities
+```{r}
+df_oxidases_6_activity <- df_oxidases_5_merged %>%
+  mutate(
+    # Sample per well [g]
+    sample_per_well_g = sample_g * homogenate_ml / buffer_ml,
+
+    # Activity per g sample [E630 g-1 h-1]; per g dry soil when sample_g is the
+    # dry weight equivalent of the weighed soil, as in the protocol
+    activity = slope_per_min * 60 / sample_per_well_g
+  )
+```
+
+## Step 4e: Quality control
+```{r}
+# Samples are flagged instead of removed, so that every sample stays in the output
+df_oxidases_7_processed <- df_oxidases_6_activity %>%
+  mutate(
+    qc_flag = case_when(
+      id == negative_control_id  ~ "negative control",
+      is.na(activity)            ~ "missing assay data",
+      activity <= 0              ~ "activity <= 0",
+      r_squared < min_r_squared  ~ "r2 below limit",
+      .default = "ok"
+    )
+  )
+
+# Negative controls: the slopes should be close to zero
+df_oxidases_7_processed %>%
+  filter(id == negative_control_id) %>%
+  select(id, plate, position, enzyme, slope_per_min, r_squared)
+
+# Show all samples that did not pass the quality control
+df_oxidases_7_processed %>%
+  filter(qc_flag != "ok", id != negative_control_id) %>%
+  select(id, plate, position, enzyme, slope_per_min, r_squared, activity, qc_flag)
+```
+
+# Step 5: Save processed data
+```{r}
+dir.create(path_processed, showWarnings = FALSE)
+
+write_csv(df_oxidases_7_processed,
+          file.path(path_processed, "df_oxidases_processed.csv"))
+```
+
+# Step 6: Summary of dataframes
+```{r}
+# Number of samples per enzyme and quality flag
+df_oxidases_7_processed %>%
+  count(enzyme, qc_flag)
+
+# Activities of the samples that passed the quality control
+df_oxidases_7_processed %>%
+  filter(qc_flag == "ok") %>%
+  group_by(enzyme) %>%
+  summarise(
+    n    = n(),
+    mean = mean(activity),
+    min  = min(activity),
+    max  = max(activity)
+  )
+```
+
+# References
+```{r}
+# here: Müller, K. (2025). here: A Simpler Way to Find Your Files. R package version 1.0.2. https://doi.org/10.32614/CRAN.package.here
+# readxl: Wickham, H. & Bryan, J. (2026). readxl: Read Excel Files. R package version 1.5.0. https://doi.org/10.32614/CRAN.package.readxl
+# tidyverse: Wickham, H., Averick, M., Bryan, J., Chang, W., McGowan, L. D., François, R., ... & Yutani, H. (2019). Welcome to the tidyverse. Journal of Open Source Software, 4(43), 1686. https://doi.org/10.21105/joss.01686
+```
